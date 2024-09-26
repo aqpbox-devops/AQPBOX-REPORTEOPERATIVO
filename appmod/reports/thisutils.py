@@ -1,5 +1,17 @@
 import pandas as pd
 import numpy as np
+from multiprocessing import Pool
+
+def disable_func(enabled=True):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if enabled:
+                return func(*args, **kwargs)
+            else:
+                print(f"This function {func.__name__} is not enabled now.")
+                return None
+        return wrapper
+    return decorator
 
 def rename_and_clean_all_columns(df: pd.DataFrame):
 
@@ -23,35 +35,26 @@ def rename_and_clean_all_columns(df: pd.DataFrame):
 
     return df
 
-def split_df_by_column_ranges(df: pd.DataFrame, column_ranges, names):
+def select_hierarchy(df: pd.DataFrame, hierarchy: str, end_hierarchy: str='eof'):
+    def find_pos(substr):
+        mask = df.index.str.contains(substr)
+        if mask.any():
+            return mask.argmax()
+        else:
+            return None
 
-  if len(column_ranges) != len(names):
-    raise ValueError("The number of column ranges must match the number of names.")
-
-  dfs = {}
-  for (start, end), name in zip(column_ranges, names):
-    new_df = df.iloc[:, start:end]
-    dfs[name] = new_df
-  return dfs
-
-def merge_multicolumns(df: pd.DataFrame):
-
-  levels = df.columns.nlevels
-
-  new_cols = []
-
-  for i in range(df.shape[1]):
-    col_names = df.columns[i]
-
-    if levels == 1:
-      new_cols.append(col_names)
+    idx_start = find_pos(hierarchy)
+    if end_hierarchy == 'eof':
+        idx_end = len(df) - 1
     else:
-      new_col = ' '.join([name for name in col_names if 'Unnamed' not in name])
-      new_cols.append(new_col)
+        idx_end = find_pos(end_hierarchy)
 
-  df.columns = new_cols
+    print('INDEX_RANGE: ', idx_start, idx_end)
 
-  return df
+    if end_hierarchy == 'eof':
+        return df.iloc[idx_start:idx_end]
+    
+    return df.iloc[idx_start:idx_end].iloc[:-1]
 
 def create_hierarchical_rows(df: pd.DataFrame):
 
@@ -87,33 +90,19 @@ def create_hierarchical_rows(df: pd.DataFrame):
 
 def flatten_rows(df: pd.DataFrame, n: int):
     def clean_brackets(df: pd.DataFrame):
-      cleaned_df = df.copy()
-    
-      for col in cleaned_df.columns:
-          if cleaned_df[col].dtype == 'object':
-              cleaned_df[col] = cleaned_df[col].apply(lambda x: x[0] if isinstance(x, list) and x else (np.nan if x == [] else x))
-      
-      return cleaned_df
-    
+        return df.map(
+            lambda x: x[0] if isinstance(x, list) and x else (np.nan if isinstance(x, list) and not x else x)
+        )
+
     key = df.iloc[:, :n].astype(str).agg('-'.join, axis=1)
-    
-    flattened_rows = []
 
-    for key_val in key.unique():
-        rows = df[key == key_val]
-        
-        new_row = {}
-        
-        for col in df.columns[:n]:
-            new_row[col] = rows[col].iloc[0]  # Tomar el primer valor (suponiendo que son iguales)
-        
-        for col in df.columns[n:]:
-            new_row[col] = rows[col].dropna().unique().tolist()  # Evitar NaN y tomar valores únicos
-        
-        flattened_rows.append(new_row)
+    first_values = df.groupby(key).first().iloc[:, :n]
 
-    flattened_df = pd.DataFrame(flattened_rows)
+    remaining_values = df.groupby(key).agg(
+        {col: lambda x: pd.unique(x.dropna()).tolist() for col in df.columns[n:]}
+    )
 
-    flattened_df.index = key.unique()
-    
+    flattened_df = pd.concat([first_values, remaining_values], axis=1)
+
     return clean_brackets(flattened_df)
+

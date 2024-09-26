@@ -1,9 +1,40 @@
 import pandas as pd
-from typing import Literal
+from datetime import datetime
+from typing import Tuple, Literal
+from appmod.data_getter.sql_handler import OpeProdDB
+from appmod.data_getter.email_get_adj import extract_xlsx_attachments
+from appmod.thisconstants.vars import *
+from appmod.thisconstants.classes import *
 
 TNAME = 'NAME'
 TUSER = 'USER'
 TCODE = 'CODE'
+
+def get_all_report_by_analist(key: Literal['user', 'name', 'code'], 
+                              analist_id: str, 
+                              db_handler: OpeProdDB, 
+                              snapshot_range: Tuple[datetime, datetime],
+                              SECRETS: SecretsVault):
+
+    srows = db_handler.query_row(key, analist_id, snapshot_range)
+
+    if not is_end_of_month(snapshot_range[1]):
+        extract_xlsx_attachments(SECRETS.recover(K_EMAIL), SECRETS.recover(K_PASSWORD), 
+                                 DN_OPERATIVE)
+        extract_xlsx_attachments(SECRETS.recover(K_EMAIL), SECRETS.recover(K_PASSWORD), 
+                                 DN_PRODUCTIVITY)
+
+    head = srows.iloc[0]
+
+    data = FinalReportData(head[NAME], head[CODE], head[USER], head[CATEGORY], head[REGION],
+                           head[ZONE], head[AGENCY], head[COMMITTEE], head[IN_DATE])
+    
+    for row in srows.iterrows():
+        data.add_month(row)
+
+    data.calculate_summary()
+
+    return data
 
 def get_report_from_analist(analist: str, 
                             input_t: str = Literal[TNAME, TUSER, TCODE], 
@@ -12,14 +43,14 @@ def get_report_from_analist(analist: str,
     data = {}
 
     operative_cols = ['REGION', 'ZONE', 'AGENCY',
-                      'GROUP', TUSER, TCODE, TNAME,
+                      'COMMITTEE', TUSER, TCODE, TNAME,
                       'CATEGORY', 'IN_DATE',
                       'B1', 'A1', 'D3', 'B2', 'A2',
                       'A3', 'B3', 'D1', 'D2', 'E1', 'E2'
                      ]
     
     productivity_cols = ['REGION', 'ZONE', 'AGENCY',
-                         'GROUP', TUSER, 'C1']
+                         'COMMITTEE', TUSER, 'C1']
     
     try:
         flatten_reope.columns = operative_cols
@@ -51,7 +82,7 @@ def get_report_from_analist(analist: str,
 
         data['Indicadores'] = {
             '% Retencion':srow['D1'],
-            '% Pago de Hoy':srow['D2'],
+            '% Pago a Hoy':srow['D2'],
             'Mora SBS':srow['D3']
         }
 
